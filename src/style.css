@@ -1,12 +1,25 @@
-#controlPanel {
-  padding: 1rem;
-}
-
-#statusPanel {
-  padding: 1rem;
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 #map {
-  width: 100%;
-  height: 80vh;
+  height: 100vh;
+  width: 100vw;
+  position: fixed;
+  top: 0;
+  left: 0;
+}
+
+.token-label {
+  pointer-events: none;
+}
+
+.token-text {
+  font-size: 14px;
+  color: white;
+  background: #333;
+  padding: 2px 5px;
+  border-radius: 4px;
 }
