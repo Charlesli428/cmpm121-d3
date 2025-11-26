@@ -8,7 +8,7 @@ import luck from "./_luck.ts";
 // ------------------------------------------------------------
 // CONSTANTS
 // ------------------------------------------------------------
-const CELL_SIZE = 0.0001; // ~house-sized cells
+const CELL_SIZE = 0.0001;
 const INTERACT_RADIUS = 3;
 const WIN_VALUE = 32;
 
@@ -104,7 +104,27 @@ function updateHUD(): void {
 const playerMarker = L.marker(gridToLatLng(playerI, playerJ)).addTo(map);
 
 // ------------------------------------------------------------
-// ACTIVE CELLS (MEMORYLESS PER VIEW)
+// CELL MEMORY (D3.c) — Persistent state Map
+// ------------------------------------------------------------
+const worldState = new Map<string, number>();
+
+function cellKey(i: number, j: number): string {
+  return `${i},${j}`;
+}
+
+function getStoredValue(i: number, j: number): number {
+  const key = cellKey(i, j);
+  if (worldState.has(key)) return worldState.get(key)!;
+  return tokenForCell(i, j);
+}
+
+function storeValue(i: number, j: number, value: number): void {
+  const key = cellKey(i, j);
+  worldState.set(key, value);
+}
+
+// ------------------------------------------------------------
+// ACTIVE CELL LAYERS (drawn on screen)
 // ------------------------------------------------------------
 type CellLayers = {
   rect: L.Rectangle;
@@ -114,16 +134,10 @@ type CellLayers = {
 
 const cellLayers = new Map<string, CellLayers>();
 
-function cellKey(i: number, j: number): string {
-  return `${i},${j}`;
-}
-
 function clearCells(): void {
   for (const { rect, marker } of cellLayers.values()) {
     map.removeLayer(rect);
-    if (marker) {
-      map.removeLayer(marker);
-    }
+    if (marker) map.removeLayer(marker);
   }
   cellLayers.clear();
 }
@@ -138,7 +152,7 @@ function inRange(i: number, j: number): boolean {
 }
 
 // ------------------------------------------------------------
-// CRAFTING / PICKUP / DROP
+// UPDATE CELL VISUAL
 // ------------------------------------------------------------
 function updateCellVisual(i: number, j: number): void {
   const key = cellKey(i, j);
@@ -164,6 +178,9 @@ function updateCellVisual(i: number, j: number): void {
   }
 }
 
+// ------------------------------------------------------------
+// HANDLING INTERACTIONS (PICKUP / DROP / MERGE)
+// ------------------------------------------------------------
 function handleInteraction(i: number, j: number): void {
   if (!inRange(i, j)) {
     console.log("Too far.");
@@ -176,34 +193,34 @@ function handleInteraction(i: number, j: number): void {
 
   const value = cell.value;
 
-  // Empty hand → pick up
+  // PICKUP
   if (heldToken === null && value > 0) {
     heldToken = value;
     cell.value = 0;
+    storeValue(i, j, 0);
     updateCellVisual(i, j);
     updateHUD();
-    console.log(`Picked up ${value}`);
     return;
   }
 
-  // Drop into empty cell
+  // DROP
   if (heldToken !== null && value === 0) {
     cell.value = heldToken;
+    storeValue(i, j, heldToken);
     heldToken = null;
     updateCellVisual(i, j);
     updateHUD();
-    console.log("Dropped token");
     return;
   }
 
-  // Merge equal tokens
+  // MERGE
   if (heldToken !== null && value === heldToken) {
     const newValue = heldToken * 2;
     cell.value = newValue;
+    storeValue(i, j, newValue);
     heldToken = null;
     updateCellVisual(i, j);
     updateHUD();
-    console.log(`Merged into ${newValue}`);
 
     if (newValue >= WIN_VALUE) {
       hud.textContent = `YOU WIN! Crafted ${newValue}!`;
@@ -216,7 +233,7 @@ function handleInteraction(i: number, j: number): void {
 }
 
 // ------------------------------------------------------------
-// GRID DRAW (MEMORYLESS WORLD)
+// DRAW GRID (NOW USING PERSISTENT STATE)
 // ------------------------------------------------------------
 function drawVisibleGrid(): void {
   clearCells();
@@ -230,7 +247,7 @@ function drawVisibleGrid(): void {
 
   for (let i = minI - 2; i <= maxI + 2; i++) {
     for (let j = minJ - 2; j <= maxJ + 2; j++) {
-      const value = tokenForCell(i, j);
+      const value = getStoredValue(i, j);
       const boundsForCell = cellToBounds(i, j);
 
       const rect = L.rectangle(boundsForCell, {
@@ -267,8 +284,9 @@ function movePlayer(di: number, dj: number): void {
   playerI += di;
   playerJ += dj;
 
-  playerMarker.setLatLng(gridToLatLng(playerI, playerJ));
-  map.setView(gridToLatLng(playerI, playerJ), map.getZoom());
+  const newPos = gridToLatLng(playerI, playerJ);
+  playerMarker.setLatLng(newPos);
+  map.setView(newPos, map.getZoom());
 
   updateHUD();
   drawVisibleGrid();
@@ -292,7 +310,7 @@ document.getElementById("west")?.addEventListener(
 );
 
 // ------------------------------------------------------------
-// MAP MOVE HANDLER (SCROLLING)
+// MAP MOVE HANDLER
 // ------------------------------------------------------------
 map.on("moveend", () => {
   drawVisibleGrid();
