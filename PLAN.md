@@ -25,14 +25,14 @@ A map-based crafting game played on a global grid. Each cell can contain a deter
 - [x] Rendered grid cells using deterministic luck() values
 - [x] Added HUD showing player position and held token
 - [x] Implemented pick up / drop interactions
-- [x] Implemented merging (crafting) of equal-value tokens
+- [x] Implemented merging (crafting) mechanics
 - [x] Added win condition for required token value
 
 ### Done Criteria
 
 - [x] Deterministic grid visible on map
 - [x] Player can interact only with nearby cells
-- [x] Crafting system functions (pick up, drop, merge)
+- [x] Crafting system fully works
 - [x] Win condition triggers at correct value
 
 ---
@@ -41,44 +41,49 @@ A map-based crafting game played on a global grid. Each cell can contain a deter
 
 ### Steps Completed
 
-- [x] Converted game to global grid anchored at Null Island
-- [x] Added N/S/E/W movement buttons and playerI/playerJ state
+- [x] Converted gameplay to global grid anchored at Null Island
+- [x] Added movement controls (N/S/E/W)
+- [x] Added playerI/playerJ to track player grid position
 - [x] Implemented global latLng ↔ cell coordinate conversion
-- [x] Added moveend listener to redraw grid on map movement
-- [x] Implemented full dynamic spawning/despawning of cells
-- [x] Ensured interaction range uses player grid coordinates
-- [x] Updated crafting + win condition to use global system
-- [x] Increased target value and validated new merge flow
+- [x] Added moveend handler for map-based grid redraw
+- [x] Dynamic cell spawn/despawn based on visible area
+- [x] Updated interaction range to use player grid coordinates
+- [x] Updated crafting + win condition for global play
 
 ### Done Criteria
 
-- [x] Player movement updates world position correctly
-- [x] Map displays valid cells anywhere on Earth
-- [x] Cells forget state when off-screen (memoryless behavior)
-- [x] Crafting works at global coordinates
-- [x] Player can reach higher-value goal
+- [x] Player can move globally and interact with nearby cells
+- [x] Map correctly renders cells anywhere on Earth
+- [x] Cells forget state when off-screen (intended for D3.b)
+- [x] Crafting and merging work across global positions
 
 ---
 
-## D3.c — Object Persistence (Next)
+## D3.c — Object Persistence (In Progress)
 
-### Planned Steps
+### Part A — In-Memory Persistence (Complete)
 
-- [ ] Introduce persistent world-state Map keyed by cell coordinates
-- [ ] Remove memoryless behavior; preserve modified cell states
-- [ ] Apply Flyweight pattern for unmodified off-screen cells
-- [ ] Use Memento-like save/restore for modified cells
-- [ ] Prevent farming by re-entering the same area
-- [ ] Rebuild displayed cells from persistent data on move
+- [x] Added worldState Map to store modified cell values
+- [x] Introduced getStoredValue() and storeValue() helpers
+- [x] Replaced tokenForCell() calls with persistent state lookup
+- [x] Updated pick up / drop / merge actions to store new values
+- [x] Ensured modified cells preserve state when off-screen
+- [x] Fixed token farming exploit (cells no longer reset)
+
+### Part A Done Criteria
+
+- [x] Modified cells persist as long as the page is open
+- [x] Cells restore correct values when returning into view
+- [x] World remains deterministic for untouched cells
 
 ---
 
-## D3.d — Real-World Geolocation + Multi-Session Play (Later)
+## D3.d — Real-World Geolocation + Multi-Session (Not Started)
 
 ### Planned Steps
 
-- [ ] Add geolocation-based movement (navigator.geolocation)
-- [ ] Implement movement control behind a Facade interface
-- [ ] Persist game state to localStorage (tokens, player pos, inventory)
-- [ ] Add "New Game" option to clear stored state
-- [ ] Allow switching movement mode (buttons vs geolocation)
+- [ ] Add geolocation-based player movement using browser API
+- [ ] Implement movement system behind Facade interface
+- [ ] Store worldState, player position, and held token in localStorage
+- [ ] Add "New Game" reset option
+- [ ] Allow switching between button movement and geolocation movement
