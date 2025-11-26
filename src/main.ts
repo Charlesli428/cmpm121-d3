@@ -3,11 +3,17 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "./style.css";
 import "./_leafletWorkaround.ts";
-
 import luck from "./_luck.ts";
 
 // ------------------------------------------------------------
-// DOM elements
+// CONSTANTS
+// ------------------------------------------------------------
+const CELL_SIZE = 0.0001; // ~house-sized cells
+const INTERACT_RADIUS = 3;
+const WIN_VALUE = 32;
+
+// ------------------------------------------------------------
+// DOM SETUP
 // ------------------------------------------------------------
 const mapDiv = document.createElement("div");
 mapDiv.id = "map";
@@ -42,7 +48,7 @@ controls.innerHTML = `
 document.body.append(controls);
 
 // ------------------------------------------------------------
-// Map setup
+// MAP
 // ------------------------------------------------------------
 const NullIsland = L.latLng(0, 0);
 
@@ -58,32 +64,18 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
 }).addTo(map);
 
 // ------------------------------------------------------------
-// Grid + token helpers
+// GRID HELPERS
 // ------------------------------------------------------------
-const CELL_SIZE = 0.0001; // degrees
-const INTERACT_RADIUS = 3;
-
-// Player grid coordinates (NOT lat/lng)
-let playerI = 0;
-let playerJ = 0;
-
-function updateHUD(): void {
-  hud.textContent = `Player grid: (${playerI}, ${playerJ})`;
-}
-
-// Convert grid cell → lat/lng center
 function gridToLatLng(i: number, j: number): L.LatLng {
   return L.latLng(i * CELL_SIZE, j * CELL_SIZE);
 }
 
-// Convert lat/lng → grid cell
 function latLngToCell(lat: number, lng: number): [number, number] {
   const i = Math.floor(lat / CELL_SIZE);
   const j = Math.floor(lng / CELL_SIZE);
   return [i, j];
 }
 
-// Get bounds of a cell
 function cellToBounds(i: number, j: number): L.LatLngBounds {
   return L.latLngBounds(
     [i * CELL_SIZE, j * CELL_SIZE],
@@ -91,35 +83,53 @@ function cellToBounds(i: number, j: number): L.LatLngBounds {
   );
 }
 
-// Deterministic token
 function tokenForCell(i: number, j: number): number {
   const r = luck(`${i},${j}`);
   return r < 0.15 ? 1 : 0;
 }
 
 // ------------------------------------------------------------
-// Player marker
+// PLAYER STATE
 // ------------------------------------------------------------
+let playerI = 0;
+let playerJ = 0;
+let heldToken: number | null = null;
+
+function updateHUD(): void {
+  hud.textContent = `Player: (${playerI}, ${playerJ}) | Held: ${
+    heldToken ?? "(empty)"
+  }`;
+}
+
 const playerMarker = L.marker(gridToLatLng(playerI, playerJ)).addTo(map);
 
 // ------------------------------------------------------------
-// Active cell storage (for clearing/redrawing)
+// ACTIVE CELLS (MEMORYLESS PER VIEW)
 // ------------------------------------------------------------
-const activeCells = new Map<
-  string,
-  { rect: L.Rectangle; marker: L.Marker | null }
->();
+type CellLayers = {
+  rect: L.Rectangle;
+  marker: L.Marker | null;
+  value: number;
+};
+
+const cellLayers = new Map<string, CellLayers>();
+
+function cellKey(i: number, j: number): string {
+  return `${i},${j}`;
+}
 
 function clearCells(): void {
-  for (const { rect, marker } of activeCells.values()) {
+  for (const { rect, marker } of cellLayers.values()) {
     map.removeLayer(rect);
-    if (marker) map.removeLayer(marker);
+    if (marker) {
+      map.removeLayer(marker);
+    }
   }
-  activeCells.clear();
+  cellLayers.clear();
 }
 
 // ------------------------------------------------------------
-// Interaction
+// INTERACTION RANGE
 // ------------------------------------------------------------
 function inRange(i: number, j: number): boolean {
   const di = Math.abs(i - playerI);
@@ -128,7 +138,85 @@ function inRange(i: number, j: number): boolean {
 }
 
 // ------------------------------------------------------------
-// Dynamic grid drawing
+// CRAFTING / PICKUP / DROP
+// ------------------------------------------------------------
+function updateCellVisual(i: number, j: number): void {
+  const key = cellKey(i, j);
+  const cell = cellLayers.get(key);
+  if (!cell) return;
+
+  const { rect } = cell;
+
+  if (cell.marker) {
+    map.removeLayer(cell.marker);
+    cell.marker = null;
+  }
+
+  if (cell.value > 0) {
+    const center = rect.getBounds().getCenter();
+    cell.marker = L.marker(center, {
+      icon: L.divIcon({
+        className: "token-label",
+        html: `<div class="token-text">${cell.value}</div>`,
+      }),
+      interactive: false,
+    }).addTo(map);
+  }
+}
+
+function handleInteraction(i: number, j: number): void {
+  if (!inRange(i, j)) {
+    console.log("Too far.");
+    return;
+  }
+
+  const key = cellKey(i, j);
+  const cell = cellLayers.get(key);
+  if (!cell) return;
+
+  const value = cell.value;
+
+  // Empty hand → pick up
+  if (heldToken === null && value > 0) {
+    heldToken = value;
+    cell.value = 0;
+    updateCellVisual(i, j);
+    updateHUD();
+    console.log(`Picked up ${value}`);
+    return;
+  }
+
+  // Drop into empty cell
+  if (heldToken !== null && value === 0) {
+    cell.value = heldToken;
+    heldToken = null;
+    updateCellVisual(i, j);
+    updateHUD();
+    console.log("Dropped token");
+    return;
+  }
+
+  // Merge equal tokens
+  if (heldToken !== null && value === heldToken) {
+    const newValue = heldToken * 2;
+    cell.value = newValue;
+    heldToken = null;
+    updateCellVisual(i, j);
+    updateHUD();
+    console.log(`Merged into ${newValue}`);
+
+    if (newValue >= WIN_VALUE) {
+      hud.textContent = `YOU WIN! Crafted ${newValue}!`;
+    }
+
+    return;
+  }
+
+  console.log("No action.");
+}
+
+// ------------------------------------------------------------
+// GRID DRAW (MEMORYLESS WORLD)
 // ------------------------------------------------------------
 function drawVisibleGrid(): void {
   clearCells();
@@ -142,10 +230,10 @@ function drawVisibleGrid(): void {
 
   for (let i = minI - 2; i <= maxI + 2; i++) {
     for (let j = minJ - 2; j <= maxJ + 2; j++) {
-      const token = tokenForCell(i, j);
-      const b = cellToBounds(i, j);
+      const value = tokenForCell(i, j);
+      const boundsForCell = cellToBounds(i, j);
 
-      const rect = L.rectangle(b, {
+      const rect = L.rectangle(boundsForCell, {
         color: "#999",
         weight: 1,
         fillOpacity: 0.08,
@@ -153,39 +241,36 @@ function drawVisibleGrid(): void {
 
       let marker: L.Marker | null = null;
 
-      if (token > 0) {
-        const center = b.getCenter();
+      if (value > 0) {
+        const center = boundsForCell.getCenter();
         marker = L.marker(center, {
           icon: L.divIcon({
             className: "token-label",
-            html: `<div class="token-text">${token}</div>`,
+            html: `<div class="token-text">${value}</div>`,
           }),
           interactive: false,
         }).addTo(map);
       }
 
-      rect.on("click", () => {
-        if (inRange(i, j)) {
-          console.log(`Interact with cell (${i}, ${j})`);
-        } else {
-          console.log("Too far away.");
-        }
-      });
+      rect.on("click", () => handleInteraction(i, j));
 
-      activeCells.set(`${i},${j}`, { rect, marker });
+      const key = cellKey(i, j);
+      cellLayers.set(key, { rect, marker, value });
     }
   }
 }
 
 // ------------------------------------------------------------
-// Player movement
+// PLAYER MOVEMENT
 // ------------------------------------------------------------
 function movePlayer(di: number, dj: number): void {
   playerI += di;
   playerJ += dj;
 
-  updateHUD();
   playerMarker.setLatLng(gridToLatLng(playerI, playerJ));
+  map.setView(gridToLatLng(playerI, playerJ), map.getZoom());
+
+  updateHUD();
   drawVisibleGrid();
 }
 
@@ -207,14 +292,14 @@ document.getElementById("west")?.addEventListener(
 );
 
 // ------------------------------------------------------------
-// Redraw grid when map stops moving
+// MAP MOVE HANDLER (SCROLLING)
 // ------------------------------------------------------------
 map.on("moveend", () => {
   drawVisibleGrid();
 });
 
 // ------------------------------------------------------------
-// Initial load
+// INITIAL BOOTSTRAP
 // ------------------------------------------------------------
 updateHUD();
 drawVisibleGrid();
