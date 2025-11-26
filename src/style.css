@@ -23,3 +23,16 @@ html, body {
   padding: 2px 5px;
   border-radius: 4px;
 }
+
+#hud {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  z-index: 1000;
+  pointer-events: none;
+}
