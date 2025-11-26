@@ -7,26 +7,47 @@ import "./_leafletWorkaround.ts";
 import luck from "./_luck.ts";
 
 // ------------------------------------------------------------
-// 1. CREATE DOM ELEMENTS
+// DOM elements
 // ------------------------------------------------------------
-
-// Map container
 const mapDiv = document.createElement("div");
 mapDiv.id = "map";
 document.body.append(mapDiv);
 
-// HUD for inventory (top-left)
-const hudDiv = document.createElement("div");
-hudDiv.id = "hud";
-document.body.append(hudDiv);
+const hud = document.createElement("div");
+hud.id = "hud";
+hud.style.position = "absolute";
+hud.style.top = "10px";
+hud.style.left = "10px";
+hud.style.background = "rgba(0,0,0,0.5)";
+hud.style.padding = "6px 10px";
+hud.style.color = "white";
+hud.style.borderRadius = "4px";
+document.body.append(hud);
+
+const controls = document.createElement("div");
+controls.id = "controls";
+controls.style.position = "absolute";
+controls.style.top = "80px";
+controls.style.left = "10px";
+controls.style.background = "rgba(0,0,0,0.5)";
+controls.style.padding = "8px";
+controls.style.borderRadius = "4px";
+controls.style.color = "white";
+controls.innerHTML = `
+<button id="north">North</button><br>
+<button id="south">South</button><br>
+<button id="east">East</button><br>
+<button id="west">West</button>
+`;
+document.body.append(controls);
 
 // ------------------------------------------------------------
-// 2. MAP SETUP
+// Map setup
 // ------------------------------------------------------------
-const CLASSROOM = L.latLng(36.997936938057016, -122.05703507501151);
+const NullIsland = L.latLng(0, 0);
 
 const map = L.map(mapDiv, {
-  center: CLASSROOM,
+  center: NullIsland,
   zoom: 19,
   minZoom: 19,
   maxZoom: 19,
@@ -36,239 +57,164 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
 }).addTo(map);
 
-// Marker showing player position
-L.marker(CLASSROOM).addTo(map);
-
 // ------------------------------------------------------------
-// 3. GRID PARAMETERS + CELL HELPERS
+// Grid + token helpers
 // ------------------------------------------------------------
-const CELL_SIZE = 0.0001; // approx size of one house
-const VIEW_RADIUS = 80; // enough cells to fill the map
-const INTERACT_RADIUS = 3; // can only click nearby cells
-const WIN_VALUE = 16; // target value to win
+const CELL_SIZE = 0.0001; // degrees
+const INTERACT_RADIUS = 3;
 
-// Convert lat/lng to grid coordinates
+// Player grid coordinates (NOT lat/lng)
+let playerI = 0;
+let playerJ = 0;
+
+function updateHUD(): void {
+  hud.textContent = `Player grid: (${playerI}, ${playerJ})`;
+}
+
+// Convert grid cell → lat/lng center
+function gridToLatLng(i: number, j: number): L.LatLng {
+  return L.latLng(i * CELL_SIZE, j * CELL_SIZE);
+}
+
+// Convert lat/lng → grid cell
 function latLngToCell(lat: number, lng: number): [number, number] {
-  const i = Math.floor((lat - CLASSROOM.lat) / CELL_SIZE);
-  const j = Math.floor((lng - CLASSROOM.lng) / CELL_SIZE);
+  const i = Math.floor(lat / CELL_SIZE);
+  const j = Math.floor(lng / CELL_SIZE);
   return [i, j];
 }
 
-// Player cell (fixed for D3.a)
-const [PLAYER_I, PLAYER_J] = latLngToCell(CLASSROOM.lat, CLASSROOM.lng);
-
-// Create cell key
-function cellKey(i: number, j: number): string {
-  return `${i},${j}`;
+// Get bounds of a cell
+function cellToBounds(i: number, j: number): L.LatLngBounds {
+  return L.latLngBounds(
+    [i * CELL_SIZE, j * CELL_SIZE],
+    [(i + 1) * CELL_SIZE, (j + 1) * CELL_SIZE],
+  );
 }
 
-// Convert grid cell to map bounds
-function cellBounds(i: number, j: number): L.LatLngBounds {
-  const lat1 = CLASSROOM.lat + i * CELL_SIZE;
-  const lng1 = CLASSROOM.lng + j * CELL_SIZE;
-  const lat2 = lat1 + CELL_SIZE;
-  const lng2 = lng1 + CELL_SIZE;
-  return L.latLngBounds([lat1, lng1], [lat2, lng2]);
-}
-
-// Initial deterministic token value
-function initialTokenForCell(i: number, j: number): number {
+// Deterministic token
+function tokenForCell(i: number, j: number): number {
   const r = luck(`${i},${j}`);
   return r < 0.15 ? 1 : 0;
 }
 
 // ------------------------------------------------------------
-// 4. GAME STATE: CELLS + INVENTORY
+// Player marker
 // ------------------------------------------------------------
+const playerMarker = L.marker(gridToLatLng(playerI, playerJ)).addTo(map);
 
-// Mutable cell state
-const cellState = new Map<string, number>();
+// ------------------------------------------------------------
+// Active cell storage (for clearing/redrawing)
+// ------------------------------------------------------------
+const activeCells = new Map<
+  string,
+  { rect: L.Rectangle; marker: L.Marker | null }
+>();
 
-// Per-cell layers (rectangle + marker)
-type CellLayers = {
-  rect: L.Rectangle;
-  marker: L.Marker | null;
-};
-
-const cellLayers = new Map<string, CellLayers>();
-
-// Player's held token (null means empty)
-let heldToken: number | null = null;
-
-// HUD update
-function updateHUD(): void {
-  if (heldToken === null) {
-    hudDiv.textContent = "Held: (empty)";
-  } else {
-    hudDiv.textContent = `Held: ${heldToken}`;
+function clearCells(): void {
+  for (const { rect, marker } of activeCells.values()) {
+    map.removeLayer(rect);
+    if (marker) map.removeLayer(marker);
   }
-}
-
-// Get or initialize cell value
-function getCellValue(i: number, j: number): number {
-  const key = cellKey(i, j);
-  const existing = cellState.get(key);
-  if (existing !== undefined) {
-    return existing;
-  }
-  const initial = initialTokenForCell(i, j);
-  cellState.set(key, initial);
-  return initial;
-}
-
-// Update a single cell's token marker
-function updateCellVisual(i: number, j: number): void {
-  const key = cellKey(i, j);
-  const layers = cellLayers.get(key);
-  if (!layers) {
-    return;
-  }
-
-  const value = cellState.get(key) ?? 0;
-
-  // Remove old marker
-  if (layers.marker) {
-    map.removeLayer(layers.marker);
-    layers.marker = null;
-  }
-
-  // Add marker if token > 0
-  if (value > 0) {
-    const center = layers.rect.getBounds().getCenter();
-    const marker = L.marker(center, {
-      icon: L.divIcon({
-        className: "token-label",
-        html: `<div class="token-text">${value}</div>`,
-      }),
-      interactive: false,
-    }).addTo(map);
-    layers.marker = marker;
-  }
+  activeCells.clear();
 }
 
 // ------------------------------------------------------------
-// 5. WIN CONDITION
+// Interaction
 // ------------------------------------------------------------
-function checkWin(value: number): void {
-  if (value >= WIN_VALUE) {
-    hudDiv.textContent = `You crafted a ${WIN_VALUE}! You win!`;
-  }
-}
-
-// ------------------------------------------------------------
-// 6. INTERACTION LOGIC (PICK UP / DROP / MERGE)
-// ------------------------------------------------------------
-function isWithinInteractRange(i: number, j: number): boolean {
-  const di = Math.abs(i - PLAYER_I);
-  const dj = Math.abs(j - PLAYER_J);
+function inRange(i: number, j: number): boolean {
+  const di = Math.abs(i - playerI);
+  const dj = Math.abs(j - playerJ);
   return Math.max(di, dj) <= INTERACT_RADIUS;
 }
 
-function handleCellClick(i: number, j: number): void {
-  if (!isWithinInteractRange(i, j)) {
-    console.log("Too far to interact with cell", i, j);
-    return;
-  }
-
-  const key = cellKey(i, j);
-
-  // IMPORTANT: always refresh before each action
-  let value = getCellValue(i, j);
-
-  // Case 1: Pick up token
-  if (heldToken === null && value > 0) {
-    heldToken = value;
-    cellState.set(key, 0);
-    updateCellVisual(i, j);
-    updateHUD();
-    console.log("Picked up token", value, "from", i, j);
-    return;
-  }
-
-  // Case 2: Drop token
-  if (heldToken !== null && value === 0) {
-    const v = heldToken;
-    cellState.set(key, v);
-    heldToken = null;
-    updateCellVisual(i, j);
-    updateHUD();
-    console.log("Dropped token", v, "into", i, j);
-    checkWin(v);
-    return;
-  }
-
-  // REFRESH value again before merge
-  value = getCellValue(i, j);
-
-  // Case 3: Merge equal tokens
-  if (heldToken !== null && value === heldToken) {
-    const newValue = heldToken * 2;
-
-    cellState.set(key, newValue);
-    heldToken = null;
-
-    updateCellVisual(i, j);
-    updateHUD();
-
-    console.log("Crafted token", newValue, "at", i, j);
-    checkWin(newValue);
-    return;
-  }
-
-  console.log(
-    "No action taken on cell",
-    i,
-    j,
-    "value",
-    value,
-    "held",
-    heldToken,
-  );
-}
-
 // ------------------------------------------------------------
-// 7. DRAW GRID
+// Dynamic grid drawing
 // ------------------------------------------------------------
-function drawGrid(): void {
-  for (let di = -VIEW_RADIUS; di <= VIEW_RADIUS; di++) {
-    for (let dj = -VIEW_RADIUS; dj <= VIEW_RADIUS; dj++) {
-      const i = di;
-      const j = dj;
-      const key = cellKey(i, j);
+function drawVisibleGrid(): void {
+  clearCells();
 
-      const bounds = cellBounds(i, j);
-      const value = getCellValue(i, j);
+  const bounds = map.getBounds();
+  const nw = bounds.getNorthWest();
+  const se = bounds.getSouthEast();
 
-      const rect = L.rectangle(bounds, {
+  const [minI, minJ] = latLngToCell(se.lat, nw.lng);
+  const [maxI, maxJ] = latLngToCell(nw.lat, se.lng);
+
+  for (let i = minI - 2; i <= maxI + 2; i++) {
+    for (let j = minJ - 2; j <= maxJ + 2; j++) {
+      const token = tokenForCell(i, j);
+      const b = cellToBounds(i, j);
+
+      const rect = L.rectangle(b, {
         color: "#999",
         weight: 1,
-        fillOpacity: 0.1,
+        fillOpacity: 0.08,
       }).addTo(map);
 
       let marker: L.Marker | null = null;
 
-      if (value > 0) {
-        const center = bounds.getCenter();
+      if (token > 0) {
+        const center = b.getCenter();
         marker = L.marker(center, {
           icon: L.divIcon({
             className: "token-label",
-            html: `<div class="token-text">${value}</div>`,
+            html: `<div class="token-text">${token}</div>`,
           }),
           interactive: false,
         }).addTo(map);
       }
 
-      rect.on("click", () => handleCellClick(i, j));
+      rect.on("click", () => {
+        if (inRange(i, j)) {
+          console.log(`Interact with cell (${i}, ${j})`);
+        } else {
+          console.log("Too far away.");
+        }
+      });
 
-      cellLayers.set(key, { rect, marker });
+      activeCells.set(`${i},${j}`, { rect, marker });
     }
   }
 }
 
 // ------------------------------------------------------------
-// 8. BOOTSTRAP
+// Player movement
 // ------------------------------------------------------------
-map.whenReady(() => {
+function movePlayer(di: number, dj: number): void {
+  playerI += di;
+  playerJ += dj;
+
   updateHUD();
-  drawGrid();
+  playerMarker.setLatLng(gridToLatLng(playerI, playerJ));
+  drawVisibleGrid();
+}
+
+document.getElementById("north")?.addEventListener(
+  "click",
+  () => movePlayer(1, 0),
+);
+document.getElementById("south")?.addEventListener(
+  "click",
+  () => movePlayer(-1, 0),
+);
+document.getElementById("east")?.addEventListener(
+  "click",
+  () => movePlayer(0, 1),
+);
+document.getElementById("west")?.addEventListener(
+  "click",
+  () => movePlayer(0, -1),
+);
+
+// ------------------------------------------------------------
+// Redraw grid when map stops moving
+// ------------------------------------------------------------
+map.on("moveend", () => {
+  drawVisibleGrid();
 });
+
+// ------------------------------------------------------------
+// Initial load
+// ------------------------------------------------------------
+updateHUD();
+drawVisibleGrid();
