@@ -36,15 +36,16 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
 }).addTo(map);
 
-// Marker just to show player position
+// Marker showing player position
 L.marker(CLASSROOM).addTo(map);
 
 // ------------------------------------------------------------
 // 3. GRID PARAMETERS + CELL HELPERS
 // ------------------------------------------------------------
-const CELL_SIZE = 0.0001; // about a house
-const VIEW_RADIUS = 80; // enough to cover screen
-const INTERACT_RADIUS = 3; // how many cells away you can interact
+const CELL_SIZE = 0.0001; // approx size of one house
+const VIEW_RADIUS = 80; // enough cells to fill the map
+const INTERACT_RADIUS = 3; // can only click nearby cells
+const WIN_VALUE = 16; // target value to win
 
 // Convert lat/lng to grid coordinates
 function latLngToCell(lat: number, lng: number): [number, number] {
@@ -53,15 +54,15 @@ function latLngToCell(lat: number, lng: number): [number, number] {
   return [i, j];
 }
 
-// Player cell (fixed at classroom for D3.a)
+// Player cell (fixed for D3.a)
 const [PLAYER_I, PLAYER_J] = latLngToCell(CLASSROOM.lat, CLASSROOM.lng);
 
-// Cell key for maps
+// Create cell key
 function cellKey(i: number, j: number): string {
   return `${i},${j}`;
 }
 
-// Convert cell coordinates to Leaflet bounds
+// Convert grid cell to map bounds
 function cellBounds(i: number, j: number): L.LatLngBounds {
   const lat1 = CLASSROOM.lat + i * CELL_SIZE;
   const lng1 = CLASSROOM.lng + j * CELL_SIZE;
@@ -70,23 +71,20 @@ function cellBounds(i: number, j: number): L.LatLngBounds {
   return L.latLngBounds([lat1, lng1], [lat2, lng2]);
 }
 
-// Initial deterministic token using luck()
+// Initial deterministic token value
 function initialTokenForCell(i: number, j: number): number {
   const r = luck(`${i},${j}`);
-  if (r < 0.15) {
-    return 1;
-  }
-  return 0;
+  return r < 0.15 ? 1 : 0;
 }
 
 // ------------------------------------------------------------
 // 4. GAME STATE: CELLS + INVENTORY
 // ------------------------------------------------------------
 
-// Mutable cell state (token value per cell)
+// Mutable cell state
 const cellState = new Map<string, number>();
 
-// Layers (rectangle + optional marker) per cell, for updating visuals
+// Per-cell layers (rectangle + marker)
 type CellLayers = {
   rect: L.Rectangle;
   marker: L.Marker | null;
@@ -94,10 +92,10 @@ type CellLayers = {
 
 const cellLayers = new Map<string, CellLayers>();
 
-// Held token: null means empty hand
+// Player's held token (null means empty)
 let heldToken: number | null = null;
 
-// HUD updater
+// HUD update
 function updateHUD(): void {
   if (heldToken === null) {
     hudDiv.textContent = "Held: (empty)";
@@ -106,7 +104,7 @@ function updateHUD(): void {
   }
 }
 
-// Get current token value for a cell, initializing from luck() once
+// Get or initialize cell value
 function getCellValue(i: number, j: number): number {
   const key = cellKey(i, j);
   const existing = cellState.get(key);
@@ -118,7 +116,7 @@ function getCellValue(i: number, j: number): number {
   return initial;
 }
 
-// Update the marker for a cell to match its state
+// Update a single cell's token marker
 function updateCellVisual(i: number, j: number): void {
   const key = cellKey(i, j);
   const layers = cellLayers.get(key);
@@ -128,13 +126,13 @@ function updateCellVisual(i: number, j: number): void {
 
   const value = cellState.get(key) ?? 0;
 
-  // Remove old marker if present
+  // Remove old marker
   if (layers.marker) {
     map.removeLayer(layers.marker);
     layers.marker = null;
   }
 
-  // Add new marker if cell has a token
+  // Add marker if token > 0
   if (value > 0) {
     const center = layers.rect.getBounds().getCenter();
     const marker = L.marker(center, {
@@ -149,13 +147,21 @@ function updateCellVisual(i: number, j: number): void {
 }
 
 // ------------------------------------------------------------
-// 5. INTERACTION LOGIC (PICK UP / DROP, NO MERGE YET)
+// 5. WIN CONDITION
+// ------------------------------------------------------------
+function checkWin(value: number): void {
+  if (value >= WIN_VALUE) {
+    hudDiv.textContent = `You crafted a ${WIN_VALUE}! You win!`;
+  }
+}
+
+// ------------------------------------------------------------
+// 6. INTERACTION LOGIC (PICK UP / DROP / MERGE)
 // ------------------------------------------------------------
 function isWithinInteractRange(i: number, j: number): boolean {
   const di = Math.abs(i - PLAYER_I);
   const dj = Math.abs(j - PLAYER_J);
-  const chebyshevDistance = Math.max(di, dj);
-  return chebyshevDistance <= INTERACT_RADIUS;
+  return Math.max(di, dj) <= INTERACT_RADIUS;
 }
 
 function handleCellClick(i: number, j: number): void {
@@ -165,9 +171,11 @@ function handleCellClick(i: number, j: number): void {
   }
 
   const key = cellKey(i, j);
-  const value = getCellValue(i, j);
 
-  // Case 1: hand empty, cell has token -> pick up
+  // IMPORTANT: always refresh before each action
+  let value = getCellValue(i, j);
+
+  // Case 1: Pick up token
   if (heldToken === null && value > 0) {
     heldToken = value;
     cellState.set(key, 0);
@@ -177,17 +185,36 @@ function handleCellClick(i: number, j: number): void {
     return;
   }
 
-  // Case 2: hand has token, cell empty -> drop
+  // Case 2: Drop token
   if (heldToken !== null && value === 0) {
-    cellState.set(key, heldToken);
-    console.log("Dropped token", heldToken, "into", i, j);
+    const v = heldToken;
+    cellState.set(key, v);
     heldToken = null;
     updateCellVisual(i, j);
     updateHUD();
+    console.log("Dropped token", v, "into", i, j);
+    checkWin(v);
     return;
   }
 
-  // Other cases (merge, etc.) will be handled in Part 3 (crafting)
+  // REFRESH value again before merge
+  value = getCellValue(i, j);
+
+  // Case 3: Merge equal tokens
+  if (heldToken !== null && value === heldToken) {
+    const newValue = heldToken * 2;
+
+    cellState.set(key, newValue);
+    heldToken = null;
+
+    updateCellVisual(i, j);
+    updateHUD();
+
+    console.log("Crafted token", newValue, "at", i, j);
+    checkWin(newValue);
+    return;
+  }
+
   console.log(
     "No action taken on cell",
     i,
@@ -200,7 +227,7 @@ function handleCellClick(i: number, j: number): void {
 }
 
 // ------------------------------------------------------------
-// 6. DRAW GRID (INITIAL RENDER)
+// 7. DRAW GRID
 // ------------------------------------------------------------
 function drawGrid(): void {
   for (let di = -VIEW_RADIUS; di <= VIEW_RADIUS; di++) {
@@ -231,9 +258,7 @@ function drawGrid(): void {
         }).addTo(map);
       }
 
-      rect.on("click", () => {
-        handleCellClick(i, j);
-      });
+      rect.on("click", () => handleCellClick(i, j));
 
       cellLayers.set(key, { rect, marker });
     }
@@ -241,7 +266,7 @@ function drawGrid(): void {
 }
 
 // ------------------------------------------------------------
-// 7. BOOTSTRAP
+// 8. BOOTSTRAP
 // ------------------------------------------------------------
 map.whenReady(() => {
   updateHUD();
