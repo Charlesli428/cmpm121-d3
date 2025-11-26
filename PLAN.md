@@ -2,74 +2,83 @@
 
 ## Vision
 
-A map-based crafting game played on a global grid. Every cell may contain a
-token whose value is generated deterministically. Players collect nearby tokens,
-merge equal tokens to craft higher-value ones, and try to reach an assigned
-target value to win.
+A map-based crafting game played on a global grid. Each cell can contain a deterministic token value. Players collect nearby tokens, merge equal tokens to craft higher-value ones, and try to reach a target value to win.
 
 ## Technologies
 
 - TypeScript
 - Deno + Vite
-- Leaflet (map, rectangles, markers)
+- Leaflet
+- luck() hashing function
 - GitHub Pages (automated deployment)
-- luck() hashing function for deterministic token spawning
 
-## D3.a: Core Mechanics (Complete)
+---
+
+# Assignments
+
+## D3.a — Core Mechanics (Complete)
 
 ### Steps Completed
 
-- [x] Deleted starter main.ts and rebuilt file from scratch
-- [x] Created full-screen Leaflet map centered at classroom
+- [x] Deleted starter main.ts and rebuilt from scratch
+- [x] Created full-screen Leaflet map centered at starting location
 - [x] Rendered grid cells using deterministic luck() values
-- [x] Added HUD showing held token
-- [x] Implemented pick up and drop interactions
+- [x] Added HUD showing player position and held token
+- [x] Implemented pick up / drop interactions
 - [x] Implemented merging (crafting) of equal-value tokens
-- [x] Added win condition once crafted token reaches required value
+- [x] Added win condition for required token value
 
-### Done Criteria for D3.a
+### Done Criteria
 
-- [x] Map loads and fills the screen
-- [x] Visible grid of deterministic cells
-- [x] Player can pick up and drop tokens within range
-- [x] Player can merge equal tokens into higher values
-- [x] Win condition triggers at target value
+- [x] Deterministic grid visible on map
+- [x] Player can interact only with nearby cells
+- [x] Crafting system functions (pick up, drop, merge)
+- [x] Win condition triggers at correct value
 
-## D3.b: Globe-Spanning Gameplay (In Progress)
+---
 
-### Goal
+## D3.b — Globe-Spanning Gameplay (Complete)
 
-Convert the local classroom-based grid into a full Earth-wide grid anchored at
-Null Island (0, 0). Allow simulated player movement and dynamic cell spawning
-based on map view. Cells should forget their state when off-screen.
+### Steps Completed
 
-### Steps
+- [x] Converted game to global grid anchored at Null Island
+- [x] Added N/S/E/W movement buttons and playerI/playerJ state
+- [x] Implemented global latLng ↔ cell coordinate conversion
+- [x] Added moveend listener to redraw grid on map movement
+- [x] Implemented full dynamic spawning/despawning of cells
+- [x] Ensured interaction range uses player grid coordinates
+- [x] Updated crafting + win condition to use global system
+- [x] Increased target value and validated new merge flow
 
-#### Part 1 — Map and Movement
+### Done Criteria
 
-- [ ] Add UI buttons to simulate movement (N/S/E/W)
-- [ ] Introduce playerI and playerJ grid coordinates (start at 0, 0)
-- [ ] Convert all coordinate math to use Null Island instead of the classroom
-- [ ] Implement global latLng ↔ cell coordinate conversions
-- [ ] Add map moveend listener to detect when the map stops panning
-- [ ] Spawn and despawn visible cells dynamically based on map bounds
-- [ ] Ensure interaction range depends on playerI and playerJ
+- [x] Player movement updates world position correctly
+- [x] Map displays valid cells anywhere on Earth
+- [x] Cells forget state when off-screen (memoryless behavior)
+- [x] Crafting works at global coordinates
+- [x] Player can reach higher-value goal
 
-#### Part 2 — Crafting Updates
+---
 
-- [ ] Increase win threshold (example: craft value 32)
-- [ ] Re-enable crafting using global coordinates
-- [ ] Update win condition and HUD text
-- [ ] Add commit: "D3.b Part 2 complete"
+## D3.c — Object Persistence (Next)
 
-## D3.c: Persistence (Not Started)
+### Planned Steps
 
-- [ ] Replace memoryless cell behavior with persistent world state
-- [ ] Prevent token farming when leaving and re-entering areas
-- [ ] Store cell states in a suitable persistent structure
+- [ ] Introduce persistent world-state Map keyed by cell coordinates
+- [ ] Remove memoryless behavior; preserve modified cell states
+- [ ] Apply Flyweight pattern for unmodified off-screen cells
+- [ ] Use Memento-like save/restore for modified cells
+- [ ] Prevent farming by re-entering the same area
+- [ ] Rebuild displayed cells from persistent data on move
 
-## D3.d: Geolocation and Multi-Session (Not Started)
+---
 
-- [ ] Add real geolocation for player movement
-- [ ] Save game state to localStorage so progress survives reloads
-- [ ] Support play sessions involving real and simulated movement
+## D3.d — Real-World Geolocation + Multi-Session Play (Later)
+
+### Planned Steps
+
+- [ ] Add geolocation-based movement (navigator.geolocation)
+- [ ] Implement movement control behind a Facade interface
+- [ ] Persist game state to localStorage (tokens, player pos, inventory)
+- [ ] Add "New Game" option to clear stored state
+- [ ] Allow switching movement mode (buttons vs geolocation)
