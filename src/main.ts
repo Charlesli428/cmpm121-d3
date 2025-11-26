@@ -11,6 +11,25 @@ import luck from "./_luck.ts";
 const CELL_SIZE = 0.0001;
 const INTERACT_RADIUS = 3;
 const WIN_VALUE = 32;
+const STORAGE_KEY = "world-of-bits-state-v1";
+
+// ------------------------------------------------------------
+// TYPES
+// ------------------------------------------------------------
+type MovementMode = "buttons" | "geo";
+
+type SavedState = {
+  playerI: number;
+  playerJ: number;
+  heldToken: number | null;
+  worldStateEntries: [string, number][];
+  movementMode: MovementMode;
+};
+
+interface MovementController {
+  start(): void;
+  stop(): void;
+}
 
 // ------------------------------------------------------------
 // DOM SETUP
@@ -46,6 +65,31 @@ controls.innerHTML = `
 <button id="west">West</button>
 `;
 document.body.append(controls);
+
+// directional button references
+const northButton = document.getElementById("north") as
+  | HTMLButtonElement
+  | null;
+const southButton = document.getElementById("south") as
+  | HTMLButtonElement
+  | null;
+const eastButton = document.getElementById("east") as HTMLButtonElement | null;
+const westButton = document.getElementById("west") as HTMLButtonElement | null;
+
+// mode toggle + new game buttons
+const modeToggleButton = document.createElement("button") as HTMLButtonElement;
+modeToggleButton.id = "modeToggle";
+modeToggleButton.style.marginTop = "6px";
+modeToggleButton.style.display = "block";
+modeToggleButton.textContent = "Switch to Geolocation Movement";
+controls.appendChild(modeToggleButton);
+
+const newGameButton = document.createElement("button") as HTMLButtonElement;
+newGameButton.id = "newGame";
+newGameButton.style.marginTop = "6px";
+newGameButton.style.display = "block";
+newGameButton.textContent = "New Game";
+controls.appendChild(newGameButton);
 
 // ------------------------------------------------------------
 // MAP
@@ -104,7 +148,7 @@ function updateHUD(): void {
 const playerMarker = L.marker(gridToLatLng(playerI, playerJ)).addTo(map);
 
 // ------------------------------------------------------------
-// CELL MEMORY (D3.c) — Persistent state Map
+// CELL MEMORY (D3.c)
 // ------------------------------------------------------------
 const worldState = new Map<string, number>();
 
@@ -152,7 +196,7 @@ function inRange(i: number, j: number): boolean {
 }
 
 // ------------------------------------------------------------
-// UPDATE CELL VISUAL
+// UPDATE CELL VISUAL **(FIXED TOKEN CENTERING)**
 // ------------------------------------------------------------
 function updateCellVisual(i: number, j: number): void {
   const key = cellKey(i, j);
@@ -172,6 +216,8 @@ function updateCellVisual(i: number, j: number): void {
       icon: L.divIcon({
         className: "token-label",
         html: `<div class="token-text">${cell.value}</div>`,
+        iconSize: [30, 30],
+        iconAnchor: [15, 15], // FIX: CENTER TOKEN
       }),
       interactive: false,
     }).addTo(map);
@@ -179,13 +225,50 @@ function updateCellVisual(i: number, j: number): void {
 }
 
 // ------------------------------------------------------------
-// HANDLING INTERACTIONS (PICKUP / DROP / MERGE)
+// SAVE / LOAD GAME STATE
+// ------------------------------------------------------------
+let loadedMovementMode: MovementMode | null = null;
+
+function saveGame(): void {
+  const state: SavedState = {
+    playerI,
+    playerJ,
+    heldToken,
+    worldStateEntries: Array.from(worldState.entries()),
+    movementMode: currentMovementMode,
+  };
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (err) {
+    console.error("Failed to save game:", err);
+  }
+}
+
+function loadGame(): void {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return;
+
+  try {
+    const data = JSON.parse(raw) as SavedState;
+    playerI = data.playerI ?? 0;
+    playerJ = data.playerJ ?? 0;
+    heldToken = data.heldToken ?? null;
+    worldState.clear();
+    for (const [key, v] of data.worldStateEntries ?? []) {
+      worldState.set(key, v);
+    }
+    loadedMovementMode = data.movementMode;
+  } catch (err) {
+    console.error("Error loading game:", err);
+  }
+}
+
+// ------------------------------------------------------------
+// INTERACTIONS
 // ------------------------------------------------------------
 function handleInteraction(i: number, j: number): void {
-  if (!inRange(i, j)) {
-    console.log("Too far.");
-    return;
-  }
+  if (!inRange(i, j)) return;
 
   const key = cellKey(i, j);
   const cell = cellLayers.get(key);
@@ -200,6 +283,7 @@ function handleInteraction(i: number, j: number): void {
     storeValue(i, j, 0);
     updateCellVisual(i, j);
     updateHUD();
+    saveGame();
     return;
   }
 
@@ -210,6 +294,7 @@ function handleInteraction(i: number, j: number): void {
     heldToken = null;
     updateCellVisual(i, j);
     updateHUD();
+    saveGame();
     return;
   }
 
@@ -221,6 +306,7 @@ function handleInteraction(i: number, j: number): void {
     heldToken = null;
     updateCellVisual(i, j);
     updateHUD();
+    saveGame();
 
     if (newValue >= WIN_VALUE) {
       hud.textContent = `YOU WIN! Crafted ${newValue}!`;
@@ -228,12 +314,10 @@ function handleInteraction(i: number, j: number): void {
 
     return;
   }
-
-  console.log("No action.");
 }
 
 // ------------------------------------------------------------
-// DRAW GRID (NOW USING PERSISTENT STATE)
+// DRAW GRID (FIXED TOKEN CENTERING INSIDE)
 // ------------------------------------------------------------
 function drawVisibleGrid(): void {
   clearCells();
@@ -257,13 +341,14 @@ function drawVisibleGrid(): void {
       }).addTo(map);
 
       let marker: L.Marker | null = null;
-
       if (value > 0) {
         const center = boundsForCell.getCenter();
         marker = L.marker(center, {
           icon: L.divIcon({
             className: "token-label",
             html: `<div class="token-text">${value}</div>`,
+            iconSize: [30, 30],
+            iconAnchor: [15, 15], // FIX: CENTER TOKEN
           }),
           interactive: false,
         }).addTo(map);
@@ -278,7 +363,7 @@ function drawVisibleGrid(): void {
 }
 
 // ------------------------------------------------------------
-// PLAYER MOVEMENT
+// PLAYER MOVEMENT HELPERS
 // ------------------------------------------------------------
 function movePlayer(di: number, dj: number): void {
   playerI += di;
@@ -290,34 +375,157 @@ function movePlayer(di: number, dj: number): void {
 
   updateHUD();
   drawVisibleGrid();
+  saveGame();
 }
 
-document.getElementById("north")?.addEventListener(
-  "click",
-  () => movePlayer(1, 0),
-);
-document.getElementById("south")?.addEventListener(
-  "click",
-  () => movePlayer(-1, 0),
-);
-document.getElementById("east")?.addEventListener(
-  "click",
-  () => movePlayer(0, 1),
-);
-document.getElementById("west")?.addEventListener(
-  "click",
-  () => movePlayer(0, -1),
-);
+function setPlayerFromLatLng(lat: number, lng: number): void {
+  const [i, j] = latLngToCell(lat, lng);
+  playerI = i;
+  playerJ = j;
+
+  const newPos = gridToLatLng(playerI, playerJ);
+  playerMarker.setLatLng(newPos);
+  map.setView(newPos, map.getZoom());
+
+  updateHUD();
+  drawVisibleGrid();
+  saveGame();
+}
+
+// ------------------------------------------------------------
+// MOVEMENT CONTROLLERS (FACADE)
+// ------------------------------------------------------------
+class ButtonMovement implements MovementController {
+  private handlers: Array<[HTMLButtonElement, () => void]> = [];
+
+  start(): void {
+    if (!northButton) return;
+
+    this.handlers = [
+      [northButton!, () => movePlayer(1, 0)],
+      [southButton!, () => movePlayer(-1, 0)],
+      [eastButton!, () => movePlayer(0, 1)],
+      [westButton!, () => movePlayer(0, -1)],
+    ];
+
+    for (const [btn, fn] of this.handlers) {
+      btn.addEventListener("click", fn);
+      btn.disabled = false;
+    }
+  }
+
+  stop(): void {
+    for (const [btn, fn] of this.handlers) {
+      btn.removeEventListener("click", fn);
+      btn.disabled = true;
+    }
+  }
+}
+
+class GeoMovement implements MovementController {
+  private watchId: number | null = null;
+
+  start(): void {
+    if (!navigator.geolocation) {
+      alert("Geolocation not supported.");
+      return;
+    }
+
+    for (const btn of [northButton, southButton, eastButton, westButton]) {
+      if (btn) btn.disabled = true;
+    }
+
+    this.watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        setPlayerFromLatLng(pos.coords.latitude, pos.coords.longitude);
+      },
+      (err) => console.error(err),
+      { enableHighAccuracy: true },
+    );
+  }
+
+  stop(): void {
+    if (this.watchId !== null) {
+      navigator.geolocation.clearWatch(this.watchId);
+      this.watchId = null;
+    }
+  }
+}
+
+// ------------------------------------------------------------
+// MOVEMENT MODE MANAGEMENT
+// ------------------------------------------------------------
+const buttonMovement = new ButtonMovement();
+const geoMovement = new GeoMovement();
+
+let currentMovement: MovementController = buttonMovement;
+let currentMovementMode: MovementMode = "buttons";
+
+function updateMovementModeUI() {
+  modeToggleButton.textContent = currentMovementMode === "buttons"
+    ? "Switch to Geolocation Movement"
+    : "Switch to Button Movement";
+}
+
+function switchMovement(mode: MovementMode) {
+  currentMovement.stop();
+  currentMovementMode = mode;
+  currentMovement = mode === "buttons" ? buttonMovement : geoMovement;
+
+  updateMovementModeUI();
+  currentMovement.start();
+  saveGame();
+}
+
+// ------------------------------------------------------------
+// NEW GAME
+// ------------------------------------------------------------
+function startNewGame() {
+  worldState.clear();
+  playerI = 0;
+  playerJ = 0;
+  heldToken = null;
+
+  const pos = gridToLatLng(playerI, playerJ);
+  playerMarker.setLatLng(pos);
+  map.setView(pos, map.getZoom());
+
+  updateHUD();
+  drawVisibleGrid();
+  saveGame();
+}
 
 // ------------------------------------------------------------
 // MAP MOVE HANDLER
 // ------------------------------------------------------------
-map.on("moveend", () => {
-  drawVisibleGrid();
+map.on("moveend", drawVisibleGrid);
+
+// ------------------------------------------------------------
+// BUTTON HANDLERS
+// ------------------------------------------------------------
+modeToggleButton.addEventListener("click", () => {
+  switchMovement(currentMovementMode === "buttons" ? "geo" : "buttons");
+});
+
+newGameButton.addEventListener("click", () => {
+  if (confirm("Start new game?")) startNewGame();
 });
 
 // ------------------------------------------------------------
 // INITIAL BOOTSTRAP
 // ------------------------------------------------------------
+loadGame();
+
+const initialPos = gridToLatLng(playerI, playerJ);
+playerMarker.setLatLng(initialPos);
+map.setView(initialPos, map.getZoom());
 updateHUD();
 drawVisibleGrid();
+
+currentMovementMode = loadedMovementMode ?? "buttons";
+currentMovement = currentMovementMode === "buttons"
+  ? buttonMovement
+  : geoMovement;
+updateMovementModeUI();
+currentMovement.start();
+saveGame();
