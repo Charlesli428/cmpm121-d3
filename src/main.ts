@@ -66,7 +66,6 @@ controls.innerHTML = `
 `;
 document.body.append(controls);
 
-// directional button references
 const northButton = document.getElementById("north") as
   | HTMLButtonElement
   | null;
@@ -76,7 +75,6 @@ const southButton = document.getElementById("south") as
 const eastButton = document.getElementById("east") as HTMLButtonElement | null;
 const westButton = document.getElementById("west") as HTMLButtonElement | null;
 
-// mode toggle + new game buttons
 const modeToggleButton = document.createElement("button") as HTMLButtonElement;
 modeToggleButton.id = "modeToggle";
 modeToggleButton.style.marginTop = "6px";
@@ -168,7 +166,7 @@ function storeValue(i: number, j: number, value: number): void {
 }
 
 // ------------------------------------------------------------
-// ACTIVE CELL LAYERS (drawn on screen)
+// ACTIVE CELL LAYERS
 // ------------------------------------------------------------
 type CellLayers = {
   rect: L.Rectangle;
@@ -187,7 +185,7 @@ function clearCells(): void {
 }
 
 // ------------------------------------------------------------
-// INTERACTION RANGE
+// INTERACTION RANGE CHECK
 // ------------------------------------------------------------
 function inRange(i: number, j: number): boolean {
   const di = Math.abs(i - playerI);
@@ -196,7 +194,33 @@ function inRange(i: number, j: number): boolean {
 }
 
 // ------------------------------------------------------------
-// UPDATE CELL VISUAL **(FIXED TOKEN CENTERING)**
+// INTERACTION RANGE VISUAL (NEW)
+// ------------------------------------------------------------
+let interactRect: L.Rectangle | null = null;
+
+function updateInteractRange(): void {
+  if (interactRect) {
+    map.removeLayer(interactRect);
+  }
+
+  const minI = playerI - INTERACT_RADIUS;
+  const maxI = playerI + INTERACT_RADIUS;
+  const minJ = playerJ - INTERACT_RADIUS;
+  const maxJ = playerJ + INTERACT_RADIUS;
+
+  interactRect = L.rectangle(
+    cellToBounds(minI, minJ).extend(cellToBounds(maxI, maxJ)),
+    {
+      color: "yellow",
+      weight: 2,
+      fill: false,
+      dashArray: "4 4",
+    },
+  ).addTo(map);
+}
+
+// ------------------------------------------------------------
+// UPDATE CELL VISUAL
 // ------------------------------------------------------------
 function updateCellVisual(i: number, j: number): void {
   const key = cellKey(i, j);
@@ -217,7 +241,7 @@ function updateCellVisual(i: number, j: number): void {
         className: "token-label",
         html: `<div class="token-text">${cell.value}</div>`,
         iconSize: [30, 30],
-        iconAnchor: [15, 15], // FIX: CENTER TOKEN
+        iconAnchor: [15, 15],
       }),
       interactive: false,
     }).addTo(map);
@@ -225,7 +249,7 @@ function updateCellVisual(i: number, j: number): void {
 }
 
 // ------------------------------------------------------------
-// SAVE / LOAD GAME STATE
+// SAVE / LOAD
 // ------------------------------------------------------------
 let loadedMovementMode: MovementMode | null = null;
 
@@ -254,10 +278,12 @@ function loadGame(): void {
     playerI = data.playerI ?? 0;
     playerJ = data.playerJ ?? 0;
     heldToken = data.heldToken ?? null;
+
     worldState.clear();
     for (const [key, v] of data.worldStateEntries ?? []) {
       worldState.set(key, v);
     }
+
     loadedMovementMode = data.movementMode;
   } catch (err) {
     console.error("Error loading game:", err);
@@ -265,7 +291,7 @@ function loadGame(): void {
 }
 
 // ------------------------------------------------------------
-// INTERACTIONS
+// INTERACTION LOGIC
 // ------------------------------------------------------------
 function handleInteraction(i: number, j: number): void {
   if (!inRange(i, j)) return;
@@ -311,13 +337,12 @@ function handleInteraction(i: number, j: number): void {
     if (newValue >= WIN_VALUE) {
       hud.textContent = `YOU WIN! Crafted ${newValue}!`;
     }
-
     return;
   }
 }
 
 // ------------------------------------------------------------
-// DRAW GRID (FIXED TOKEN CENTERING INSIDE)
+// DRAW GRID
 // ------------------------------------------------------------
 function drawVisibleGrid(): void {
   clearCells();
@@ -348,7 +373,7 @@ function drawVisibleGrid(): void {
             className: "token-label",
             html: `<div class="token-text">${value}</div>`,
             iconSize: [30, 30],
-            iconAnchor: [15, 15], // FIX: CENTER TOKEN
+            iconAnchor: [15, 15],
           }),
           interactive: false,
         }).addTo(map);
@@ -363,7 +388,7 @@ function drawVisibleGrid(): void {
 }
 
 // ------------------------------------------------------------
-// PLAYER MOVEMENT HELPERS
+// MOVEMENT HELPERS
 // ------------------------------------------------------------
 function movePlayer(di: number, dj: number): void {
   playerI += di;
@@ -375,6 +400,7 @@ function movePlayer(di: number, dj: number): void {
 
   updateHUD();
   drawVisibleGrid();
+  updateInteractRange();
   saveGame();
 }
 
@@ -389,11 +415,12 @@ function setPlayerFromLatLng(lat: number, lng: number): void {
 
   updateHUD();
   drawVisibleGrid();
+  updateInteractRange();
   saveGame();
 }
 
 // ------------------------------------------------------------
-// MOVEMENT CONTROLLERS (FACADE)
+// MOVEMENT CONTROLLERS
 // ------------------------------------------------------------
 class ButtonMovement implements MovementController {
   private handlers: Array<[HTMLButtonElement, () => void]> = [];
@@ -492,6 +519,7 @@ function startNewGame() {
 
   updateHUD();
   drawVisibleGrid();
+  updateInteractRange();
   saveGame();
 }
 
@@ -521,11 +549,13 @@ playerMarker.setLatLng(initialPos);
 map.setView(initialPos, map.getZoom());
 updateHUD();
 drawVisibleGrid();
+updateInteractRange();
 
 currentMovementMode = loadedMovementMode ?? "buttons";
 currentMovement = currentMovementMode === "buttons"
   ? buttonMovement
   : geoMovement;
+
 updateMovementModeUI();
 currentMovement.start();
 saveGame();
